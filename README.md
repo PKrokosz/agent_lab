@@ -5,7 +5,7 @@ Agent Lab to demonstracyjny lokalny agent konwersacyjny działający w trybie na
 
 ### Kluczowe funkcjonalności
 - Planowanie działań w stylu AGENT (cel → plan → kroki → wynik).
-- Zewnętrzne narzędzia: wyszukiwarka KB, odczyt plików, kalkulator, zapisywanie notatek, zapytania HTTP oraz wyszukiwarka webowa.
+- Zewnętrzne narzędzia: wyszukiwarka KB, odczyt plików, kalkulator, zapisywanie notatek, zapytania HTTP, wyszukiwarka webowa oraz bezpieczne uruchamianie kodu Python.
 - Lokalna pamięć konwersacji (`memory/state.json`) oraz notatnik (`memory/notes.md`).
 - Prosty RAG oparty o TF‑IDF na plikach `./kb/*.txt`.
 - Konfigurowalny model językowy (np. TinyLlama, Gemma 2, Qwen 2.5) i parametry generacji przez zmienne środowiskowe.
@@ -67,7 +67,7 @@ export MKL_NUM_THREADS=$(nproc)
 
 ## Workflow interakcji
 1. Użytkownik przekazuje cel lub pytanie (opcjonalnie poprzedzone `cel:`).
-2. Agent tworzy plan działania i w razie potrzeby wywołuje narzędzia (`search_kb`, `read_kb_file`, `calc`, `http_get`, `save_note`).
+2. Agent tworzy plan działania i w razie potrzeby wywołuje narzędzia (`search_kb`, `read_kb_file`, `calc`, `python_run`, `http_get`, `save_note`).
 3. Wynik końcowy jest zwracany po maksymalnie `AGENT_MAX_STEPS` krokach.
 4. Historia konwersacji i notatki są zapisywane w `memory/` i mogą być ponownie wykorzystane.
 
@@ -82,6 +82,23 @@ export MKL_NUM_THREADS=$(nproc)
 - `oblicz 3 * (4 + 5) narzędziem calc`
 - `zapisz notatkę o nowym pomyśle na funkcję`
 - `pobierz stronę https://example.com narzędziem http_get`
+- `uruchom w sandboxie python_run kod liczący średnią z listy`
+
+### Narzędzie `python_run`
+
+`python_run` umożliwia uruchamianie krótkich skryptów Python w kontrolowanym środowisku:
+
+- kod jest parsowany do AST i walidowany (blokada `import`, dostępów do atrybutów specjalnych oraz wywołań niebezpiecznych funkcji),
+- wykonanie odbywa się z ograniczonym zbiorem wbudowanych funkcji oraz modułów numerycznych (`math`, `statistics`, `fractions`, `decimal`, `itertools`, `functools`),
+- wynik zwraca przechwycone `stdout` oraz końcowe wartości zmiennych (jako `repr`).
+
+Przykład wywołania narzędzia:
+
+```json
+{"tool_name": "python_run", "arguments": {"code": "import math\nprint(math.sqrt(9))"}}
+```
+
+Jeśli walidator wykryje niedozwolone konstrukcje, narzędzie zwróci komunikat błędu, a kod nie zostanie wykonany.
 - `wyszukaj w sieci "nowości ML" narzędziem web_search`
 
 ### Integracja z SearxNG

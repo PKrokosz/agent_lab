@@ -54,6 +54,7 @@ from agent import (
     save_state,
     tool_read_kb_file,
     tool_save_note,
+    tool_python_run,
     tool_web_search,
 )
 
@@ -244,6 +245,22 @@ def test_tool_read_kb_file_path_validation(monkeypatch, tmp_path):
 def test_tool_save_note_empty_error(monkeypatch, tmp_path):
     monkeypatch.setattr("agent.NOTES_PATH", tmp_path / "notes.md")
     assert tool_save_note({"text": "   "}) == {"error": "empty note"}
+
+
+def test_tool_python_run_executes_code():
+    result = tool_python_run({"code": "x = math.sqrt(16)\nprint(x)\ny = statistics.mean([1, 2, 3])"})
+
+    assert result["stdout"].strip() == "4.0"
+    assert result["variables"]["x"] == "4.0"
+    assert result["variables"]["y"] == "2"
+
+
+def test_tool_python_run_blocks_unsafe_operations():
+    blocked_import = tool_python_run({"code": "import os"})
+    blocked_dunder = tool_python_run({"code": "print((lambda: 0).__globals__)"})
+
+    assert "not allowed" in blocked_import["error"]
+    assert "not allowed" in blocked_dunder["error"]
 
 
 def test_save_state_writes_file(monkeypatch, tmp_path):

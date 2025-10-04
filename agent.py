@@ -26,7 +26,7 @@ Uwaga: pierwsze uruchomienie pobierze i zbuforuje model.
 """
 
 from __future__ import annotations
-import os, re, json, time, math, glob, pathlib, html
+import os, re, json, time, math, glob, pathlib, html, ast, io, contextlib, builtins, statistics, fractions, decimal, itertools, functools
 from dataclasses import dataclass
 from typing import List, Dict, Any, Callable, Optional, Tuple
 
@@ -195,6 +195,137 @@ def tool_http_get(args: Dict[str,Any]) -> Dict[str,Any]:
     except Exception as e:
         return {"error": f"http failed: {e}"}
 
+
+class _PythonRunGuard(ast.NodeVisitor):
+    _BANNED_CALLS = {
+        "eval",
+        "exec",
+        "compile",
+        "open",
+        "input",
+        "__import__",
+        "globals",
+        "locals",
+        "vars",
+        "dir",
+        "breakpoint",
+    }
+
+    _BANNED_ATTRIBUTES = {
+        "__globals__",
+        "__code__",
+        "__class__",
+        "__subclasses__",
+        "__mro__",
+        "__bases__",
+        "__dict__",
+        "__getattribute__",
+        "__setattr__",
+        "__delattr__",
+        "__get__",
+        "__call__",
+        "__reduce__",
+    }
+
+    def generic_visit(self, node):  # pragma: no cover - delegating to super
+        return super().generic_visit(node)
+
+    def visit_Import(self, node):
+        raise ValueError("imports are not allowed")
+
+    def visit_ImportFrom(self, node):
+        raise ValueError("imports are not allowed")
+
+    def visit_Attribute(self, node):
+        if node.attr.startswith("__") or node.attr in self._BANNED_ATTRIBUTES:
+            raise ValueError("access to special attributes is not allowed")
+        self.generic_visit(node)
+
+    def visit_Name(self, node):
+        if node.id.startswith("__"):
+            raise ValueError("access to dunder names is not allowed")
+        self.generic_visit(node)
+
+    def visit_Call(self, node):
+        target = node.func
+        if isinstance(target, ast.Name) and target.id in self._BANNED_CALLS:
+            raise ValueError(f"call to '{target.id}' is not allowed")
+        if isinstance(target, ast.Attribute) and target.attr in self._BANNED_ATTRIBUTES:
+            raise ValueError("call to special attributes is not allowed")
+        self.generic_visit(node)
+
+
+def tool_python_run(args: Dict[str,Any]) -> Dict[str,Any]:
+    code = str(args.get("code", ""))
+    if not code.strip():
+        return {"error": "empty code"}
+
+    try:
+        tree = ast.parse(code, mode="exec")
+    except SyntaxError as exc:
+        return {"error": f"syntax error: {exc}"}
+
+    try:
+        _PythonRunGuard().visit(tree)
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+    safe_builtins = {
+        name: getattr(builtins, name)
+        for name in (
+            "abs",
+            "all",
+            "any",
+            "bool",
+            "dict",
+            "enumerate",
+            "float",
+            "int",
+            "len",
+            "list",
+            "max",
+            "min",
+            "pow",
+            "range",
+            "repr",
+            "round",
+            "set",
+            "sorted",
+            "sum",
+            "tuple",
+            "zip",
+            "print",
+        )
+    }
+
+    safe_globals: Dict[str, Any] = {
+        "__builtins__": safe_builtins,
+        "math": math,
+        "statistics": statistics,
+        "fractions": fractions,
+        "decimal": decimal,
+        "itertools": itertools,
+        "functools": functools,
+    }
+
+    safe_locals: Dict[str, Any] = {}
+    buffer = io.StringIO()
+
+    try:
+        compiled = compile(tree, "<python_run>", "exec")
+        with contextlib.redirect_stdout(buffer):
+            exec(compiled, safe_globals, safe_locals)
+    except Exception as exc:
+        return {"error": f"execution failed: {exc.__class__.__name__}: {exc}"}
+
+    stdout = buffer.getvalue()
+    variables = {
+        name: repr(value)
+        for name, value in safe_locals.items()
+        if not name.startswith("_")
+    }
+    return {"stdout": stdout, "variables": variables}
+
 def _build_summary(title: str, snippet: str, url: str, limit: int = 280) -> str:
     parts = [p for p in (title.strip(), snippet.strip(), url.strip()) if p]
     text = " — ".join(parts)
@@ -277,6 +408,7 @@ def build_tools(kb: Optional[MiniTfidf]) -> Dict[str,Tool]:
         "read_kb_file":Tool("read_kb_file", "Read a file from ./kb (safe)", tool_read_kb_file),
         "http_get":    Tool("http_get", "Simple HTTP GET (webhooks / local services)", tool_http_get),
         "web_search":  Tool("web_search", "Search the web via SearxNG", tool_web_search),
+        "python_run":  Tool("python_run", "Execute trusted Python snippets in a sandbox", tool_python_run),
     }
 
 def _seed_everything(seed: int):
