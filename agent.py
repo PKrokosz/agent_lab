@@ -238,8 +238,17 @@ def trim_history_by_tokens(tok: AutoTokenizer, messages: List[Dict[str,str]], ma
     other   = [m for m in messages if m.get("role") != "system"]
 
     def count_tokens(msgs: List[Dict[str,str]]) -> int:
-        t = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=False)
-        return len(tok(t).input_ids)
+        try:
+            text = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=False)
+        except Exception:
+            buf = []
+            for m in msgs:
+                role = m.get("role", "user")
+                content = m.get("content", "")
+                buf.append(f"<|{role}|> {content}")
+            text = "\n".join(buf)
+        encoding = tok(text)
+        return len(encoding["input_ids"])
 
     kept: List[Dict[str,str]] = []
     kept.extend(sys_msgs)
