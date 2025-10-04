@@ -282,6 +282,7 @@ class LocalAgent:
         self.state = load_state()
         self.kb = build_kb()
         self.tools = build_tools(self.kb)
+        self.stream_output = os.environ.get("AGENT_STREAM_STDOUT", "0") == "1"
 
     def _messages(self, user_msg: str) -> List[Dict[str,str]]:
         hist = self.state.get("history", [])[-HISTORY_TURNS:]
@@ -292,20 +293,48 @@ class LocalAgent:
         return msgs
 
     def _generate_text(self, model_inputs):
-        import torch
-        from transformers import TextStreamer
-        streamer = TextStreamer(self.tok, skip_prompt=True, skip_special_tokens=True)
-        out = self.model.generate(
+        from transformers import TextIteratorStreamer
+        import threading
+
+        generation_kwargs = dict(
             input_ids=model_inputs["input_ids"],
             attention_mask=model_inputs.get("attention_mask"),
             max_new_tokens=min(MAX_NEW_TOKENS, 128),
-            do_sample=True, temperature=TEMPERATURE, top_p=TOP_P,
-            use_cache=False,                  # mniej pamięci na CPU
+            do_sample=True,
+            temperature=TEMPERATURE,
+            top_p=TOP_P,
+            use_cache=False,  # mniej pamięci na CPU
             repetition_penalty=1.05,
             pad_token_id=self.tok.eos_token_id,
             eos_token_id=self.tok.eos_token_id,
-            streamer=streamer,                # streaming „pisania w locie”
         )
+
+        if self.stream_output:
+            streamer = TextIteratorStreamer(
+                self.tok,
+                skip_prompt=True,
+                skip_special_tokens=True,
+            )
+            generation_kwargs["streamer"] = streamer
+
+            thread = threading.Thread(
+                target=self.model.generate,
+                kwargs=generation_kwargs,
+                daemon=True,
+            )
+            thread.start()
+
+            collected: List[str] = []
+            for text_piece in streamer:
+                print(text_piece, end="", flush=True)
+                collected.append(text_piece)
+
+            thread.join()
+            text = "".join(collected).strip()
+            if text:
+                return text
+
+        out = self.model.generate(**generation_kwargs)
         return self.tok.decode(out[0], skip_special_tokens=True)
 
     @staticmethod
