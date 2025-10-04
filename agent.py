@@ -318,6 +318,8 @@ class LocalAgent:
             eos_token_id=self.tok.eos_token_id,
         )
 
+        fallback_kwargs = generation_kwargs
+
         if self.stream_output:
             streamer = TextIteratorStreamer(
                 self.tok,
@@ -340,10 +342,12 @@ class LocalAgent:
 
             thread.join()
             text = "".join(collected).strip()
+
+            fallback_kwargs = {k: v for k, v in generation_kwargs.items() if k != "streamer"}
             if text:
                 return text
 
-        out = self.model.generate(**generation_kwargs)
+        out = self.model.generate(**fallback_kwargs)
         return self.tok.decode(out[0], skip_special_tokens=True)
 
     @staticmethod
