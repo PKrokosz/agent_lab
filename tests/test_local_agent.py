@@ -54,6 +54,7 @@ from agent import (
     save_state,
     tool_read_kb_file,
     tool_save_note,
+    tool_web_search,
 )
 
 
@@ -253,3 +254,64 @@ def test_save_state_writes_file(monkeypatch, tmp_path):
     save_state(state)
 
     assert json.loads(state_file.read_text(encoding="utf-8")) == state
+
+
+class _DummyResponse:
+    def __init__(self, status_code=200, data=None, text=""):
+        self.status_code = status_code
+        self._data = data if data is not None else {}
+        self.text = text or json.dumps(self._data)
+        self.headers = {}
+
+    def json(self):
+        if isinstance(self._data, Exception):
+            raise self._data
+        return self._data
+
+
+def test_tool_web_search_returns_trimmed_summaries(monkeypatch):
+    payload = {
+        "results": [
+            {
+                "title": "Example Title",
+                "content": "Snippet from the result with a lot of extra    spaces.",
+                "url": "https://example.com/article",
+            },
+            {
+                "title": "Another",
+                "content": "Second snippet",
+                "url": "https://example.com/second",
+            },
+        ]
+    }
+
+    def fake_get(url, params, timeout, headers):
+        assert url == "https://search.example.com/search"
+        assert params["q"] == "python"
+        assert params["format"] == "json"
+        assert timeout == 15
+        return _DummyResponse(200, payload)
+
+    monkeypatch.setenv("AGENT_SEARXNG_URL", "https://search.example.com")
+    monkeypatch.setattr("requests.get", fake_get)
+
+    result = tool_web_search({"query": "python", "max_results": 1})
+
+    assert "results" in result
+    assert len(result["results"]) == 1
+    summary = result["results"][0]
+    assert "Example Title" in summary
+    assert "https://example.com/article" in summary
+
+
+def test_tool_web_search_handles_http_errors(monkeypatch):
+    def fake_get(url, params, timeout, headers):
+        return _DummyResponse(503, {}, text="Service unavailable")
+
+    monkeypatch.setenv("AGENT_SEARXNG_URL", "https://search.example.com")
+    monkeypatch.setattr("requests.get", fake_get)
+
+    result = tool_web_search({"query": "fail"})
+
+    assert result["error"].startswith("search failed")
+    assert result["details"] == "Service unavailable"

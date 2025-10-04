@@ -5,7 +5,7 @@ Agent Lab to demonstracyjny lokalny agent konwersacyjny działający w trybie na
 
 ### Kluczowe funkcjonalności
 - Planowanie działań w stylu AGENT (cel → plan → kroki → wynik).
-- Zewnętrzne narzędzia: wyszukiwarka KB, odczyt plików, kalkulator, zapisywanie notatek oraz zapytania HTTP.
+- Zewnętrzne narzędzia: wyszukiwarka KB, odczyt plików, kalkulator, zapisywanie notatek, zapytania HTTP oraz wyszukiwarka webowa.
 - Lokalna pamięć konwersacji (`memory/state.json`) oraz notatnik (`memory/notes.md`).
 - Prosty RAG oparty o TF‑IDF na plikach `./kb/*.txt`.
 - Konfigurowalny model językowy (np. TinyLlama, Gemma 2, Qwen 2.5) i parametry generacji przez zmienne środowiskowe.
@@ -53,6 +53,9 @@ Najważniejsze zmienne (wszystkie opcjonalne):
 - `AGENT_TEMPERATURE`, `AGENT_TOPP` – kontrola losowości generacji.
 - `AGENT_HISTORY_TURNS`, `AGENT_MAX_STEPS` – długość historii i liczba kroków planu.
 - `AGENT_SEED` – deterministyczność.
+- `AGENT_SEARXNG_URL` – baza adresu instancji SearxNG z API JSON (np. `https://searxng.example.com`).
+- `AGENT_SEARXNG_API_KEY` – opcjonalny token Bearer do uwierzytelniania żądań (jeśli wymaga tego instancja).
+- `AGENT_SEARXNG_LANGUAGE`, `AGENT_SEARXNG_SAFESEARCH` – nadpisanie języka wyników i poziomu safe-search.
 - `OMP_NUM_THREADS`, `MKL_NUM_THREADS` – optymalizacja wydajności CPU.
 
 Przykład konfiguracji dla alternatywnego modelu i wydajności CPU:
@@ -79,6 +82,19 @@ export MKL_NUM_THREADS=$(nproc)
 - `oblicz 3 * (4 + 5) narzędziem calc`
 - `zapisz notatkę o nowym pomyśle na funkcję`
 - `pobierz stronę https://example.com narzędziem http_get`
+- `wyszukaj w sieci "nowości ML" narzędziem web_search`
+
+### Integracja z SearxNG
+
+Aby korzystać z narzędzia `web_search`, wskaż instancję SearxNG udostępniającą API JSON:
+
+```bash
+export AGENT_SEARXNG_URL="https://searxng.example.com"
+# opcjonalnie, jeśli instancja wymaga tokenu
+export AGENT_SEARXNG_API_KEY="sekretny_token"
+```
+
+Agent wywoła endpoint `GET /search?format=json` i zmapuje wyniki na krótkie streszczenia (tytuł + snippet + adres URL).
 
 ## Testy
 Aby uruchomić testy jednostkowe:

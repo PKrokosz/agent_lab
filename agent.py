@@ -26,7 +26,7 @@ Uwaga: pierwsze uruchomienie pobierze i zbuforuje model.
 """
 
 from __future__ import annotations
-import os, re, json, time, math, glob, pathlib
+import os, re, json, time, math, glob, pathlib, html
 from dataclasses import dataclass
 from typing import List, Dict, Any, Callable, Optional, Tuple
 
@@ -195,6 +195,79 @@ def tool_http_get(args: Dict[str,Any]) -> Dict[str,Any]:
     except Exception as e:
         return {"error": f"http failed: {e}"}
 
+def _build_summary(title: str, snippet: str, url: str, limit: int = 280) -> str:
+    parts = [p for p in (title.strip(), snippet.strip(), url.strip()) if p]
+    text = " — ".join(parts)
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
+
+def tool_web_search(args: Dict[str,Any]) -> Dict[str,Any]:
+    query = str(args.get("query", "")).strip()
+    if not query:
+        return {"error": "empty query"}
+
+    try:
+        max_results = max(1, int(args.get("max_results", 5)))
+    except Exception:
+        return {"error": "invalid max_results"}
+
+    base_url = os.environ.get("AGENT_SEARXNG_URL") or os.environ.get("SEARXNG_URL")
+    if not base_url:
+        return {"error": "missing AGENT_SEARXNG_URL"}
+
+    endpoint = base_url.rstrip("/") + "/search"
+    headers = {}
+    api_key = os.environ.get("AGENT_SEARXNG_API_KEY")
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    params = {
+        "q": query,
+        "format": "json",
+        "language": os.environ.get("AGENT_SEARXNG_LANGUAGE", "en"),
+        "safesearch": os.environ.get("AGENT_SEARXNG_SAFESEARCH", "1"),
+    }
+
+    try:
+        response = requests.get(endpoint, params=params, timeout=15, headers=headers)
+    except Exception as exc:
+        return {"error": f"search failed: {exc}"}
+
+    if response.status_code != 200:
+        snippet = response.text[:200] if hasattr(response, "text") else ""
+        return {"error": f"search failed: HTTP {response.status_code}", "details": snippet}
+
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        return {"error": f"invalid JSON: {exc}"}
+
+    results = payload.get("results")
+    if not isinstance(results, list):
+        return {"error": "unexpected payload structure"}
+
+    summaries: List[str] = []
+    for item in results:
+        if len(summaries) >= max_results:
+            break
+        if not isinstance(item, dict):
+            continue
+        title = html.unescape(str(item.get("title", "")).strip())
+        content = html.unescape(str(item.get("content", "")).strip())
+        url = str(item.get("url", "")).strip()
+        if not (title or content or url):
+            continue
+        cleaned_snippet = re.sub(r"\s+", " ", content)
+        cleaned_title = re.sub(r"\s+", " ", title)
+        cleaned_url = url
+        summaries.append(_build_summary(cleaned_title, cleaned_snippet, cleaned_url))
+
+    if not summaries:
+        return {"error": "no results"}
+
+    return {"results": summaries}
+
 def build_tools(kb: Optional[MiniTfidf]) -> Dict[str,Tool]:
     return {
         "calc":        Tool("calc", "Safe arithmetic calculator", tool_calc),
@@ -203,6 +276,7 @@ def build_tools(kb: Optional[MiniTfidf]) -> Dict[str,Tool]:
         "list_kb":     Tool("list_kb", "List files in ./kb", tool_list_kb),
         "read_kb_file":Tool("read_kb_file", "Read a file from ./kb (safe)", tool_read_kb_file),
         "http_get":    Tool("http_get", "Simple HTTP GET (webhooks / local services)", tool_http_get),
+        "web_search":  Tool("web_search", "Search the web via SearxNG", tool_web_search),
     }
 
 def _seed_everything(seed: int):
