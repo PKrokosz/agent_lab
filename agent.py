@@ -67,6 +67,7 @@ Tools & args:
   calc:         {"expr": str}
   save_note:    {"text": str}
   http_get:     {"url": str, "timeout": int=10}
+  add_kb_document: {"title": str, "content": str}
 """
 
 def load_state() -> Dict[str, Any]:
@@ -121,8 +122,9 @@ class MiniTfidf:
         idx = np.argsort(-sims)[:k]
         return [(float(sims[i]), self.paths[i], self.docs[i][:1200]) for i in idx]
 
-def build_kb() -> Optional[MiniTfidf]:
-    files = sorted(glob.glob(str(DATA_DIR/"*.txt")))
+def build_kb(data_dir: Optional[pathlib.Path] = None) -> Optional[MiniTfidf]:
+    data_dir = DATA_DIR if data_dir is None else data_dir
+    files = sorted(glob.glob(str(pathlib.Path(data_dir) / "*.txt")))
     if not files:
         return None
     docs, paths = [], []
@@ -133,6 +135,47 @@ def build_kb() -> Optional[MiniTfidf]:
         except Exception:
             pass
     return MiniTfidf(docs, paths) if docs else None
+
+
+_SAFE_TITLE_RE = re.compile(r"^[\w\- ]{1,100}$", flags=re.UNICODE)
+
+
+def _sanitize_title(raw: str) -> Optional[str]:
+    title = raw.strip()
+    if not title or not _SAFE_TITLE_RE.match(title):
+        return None
+    normalized = re.sub(r"\s+", "_", title)
+    return normalized
+
+
+def tool_add_kb_document(args: Dict[str, Any]) -> Dict[str, Any]:
+    title_raw = str(args.get("title", ""))
+    content = str(args.get("content", ""))
+    sanitized = _sanitize_title(title_raw)
+    if not sanitized:
+        return {"error": "invalid title; use letters, numbers, spaces, hyphen or underscore"}
+    if not content.strip():
+        return {"error": "empty content"}
+
+    DATA_DIR.mkdir(exist_ok=True)
+    try:
+        root_dir = DATA_DIR.resolve(strict=False)
+    except Exception:
+        return {"error": "invalid DATA_DIR"}
+
+    target = (root_dir / f"{sanitized}.txt").resolve()
+
+    if target.parent != root_dir:
+        return {"error": "access denied"}
+    if target.exists():
+        return {"error": "document already exists"}
+
+    try:
+        target.write_text(content, encoding="utf-8")
+    except Exception as exc:
+        return {"error": f"write failed: {exc}"}
+
+    return {"ok": True, "path": str(target), "refresh_kb": True}
 
 @dataclass
 class Tool:
@@ -277,6 +320,7 @@ def build_tools(kb: Optional[MiniTfidf]) -> Dict[str,Tool]:
         "read_kb_file":Tool("read_kb_file", "Read a file from ./kb (safe)", tool_read_kb_file),
         "http_get":    Tool("http_get", "Simple HTTP GET (webhooks / local services)", tool_http_get),
         "web_search":  Tool("web_search", "Search the web via SearxNG", tool_web_search),
+        "add_kb_document": Tool("add_kb_document", "Create a new KB document", tool_add_kb_document),
     }
 
 def _seed_everything(seed: int):
@@ -475,6 +519,10 @@ class LocalAgent:
                         tool_res = tool.handler(args)
                     except Exception as e:
                         tool_res = {"error": f"tool crash: {e}"}
+                    else:
+                        if tool_res.get("refresh_kb"):
+                            self.kb = build_kb()
+                            self.tools = build_tools(self.kb)
                 # Mapuj wynik narzędzia na assistant (chat templates często ignorują role custom)
                 self.state["history"].append({"role":"assistant","content": "TOOL_RESULT(" + name + "): " + json.dumps(tool_res, ensure_ascii=False)})
                 current_msg = "[tool result received] continue."

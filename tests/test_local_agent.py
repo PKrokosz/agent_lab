@@ -51,6 +51,8 @@ from agent import (
     MiniTfidf,
     LocalAgent,
     Tool,
+    build_kb,
+    build_tools,
     save_state,
     tool_read_kb_file,
     tool_save_note,
@@ -244,6 +246,31 @@ def test_tool_read_kb_file_path_validation(monkeypatch, tmp_path):
 def test_tool_save_note_empty_error(monkeypatch, tmp_path):
     monkeypatch.setattr("agent.NOTES_PATH", tmp_path / "notes.md")
     assert tool_save_note({"text": "   "}) == {"error": "empty note"}
+
+
+def test_tool_add_kb_document_creates_file_and_refreshes_index(monkeypatch, tmp_path):
+    kb_dir = tmp_path / "kb"
+    kb_dir.mkdir()
+    monkeypatch.setattr("agent.DATA_DIR", kb_dir)
+
+    tools = build_tools(None)
+    add_tool = tools["add_kb_document"]
+
+    result = add_tool.handler({"title": "Test Doc", "content": "Python agents can store knowledge."})
+
+    assert result["ok"] is True
+    assert result["refresh_kb"] is True
+
+    expected_path = kb_dir / "Test_Doc.txt"
+    assert expected_path.exists()
+
+    kb = build_kb(data_dir=kb_dir)
+    assert kb is not None
+
+    hits = kb.search("python agents", k=1)
+    assert hits
+    top_path = hits[0][1]
+    assert top_path.endswith("Test_Doc.txt")
 
 
 def test_save_state_writes_file(monkeypatch, tmp_path):
