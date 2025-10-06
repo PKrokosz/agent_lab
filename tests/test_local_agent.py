@@ -56,6 +56,7 @@ from agent import (
     save_state,
     tool_read_kb_file,
     tool_save_note,
+    tool_python_run,
     tool_web_search,
 )
 
@@ -248,29 +249,20 @@ def test_tool_save_note_empty_error(monkeypatch, tmp_path):
     assert tool_save_note({"text": "   "}) == {"error": "empty note"}
 
 
-def test_tool_add_kb_document_creates_file_and_refreshes_index(monkeypatch, tmp_path):
-    kb_dir = tmp_path / "kb"
-    kb_dir.mkdir()
-    monkeypatch.setattr("agent.DATA_DIR", kb_dir)
+def test_tool_python_run_executes_code():
+    result = tool_python_run({"code": "x = math.sqrt(16)\nprint(x)\ny = statistics.mean([1, 2, 3])"})
 
-    tools = build_tools(None)
-    add_tool = tools["add_kb_document"]
+    assert result["stdout"].strip() == "4.0"
+    assert result["variables"]["x"] == "4.0"
+    assert result["variables"]["y"] == "2"
 
-    result = add_tool.handler({"title": "Test Doc", "content": "Python agents can store knowledge."})
 
-    assert result["ok"] is True
-    assert result["refresh_kb"] is True
+def test_tool_python_run_blocks_unsafe_operations():
+    blocked_import = tool_python_run({"code": "import os"})
+    blocked_dunder = tool_python_run({"code": "print((lambda: 0).__globals__)"})
 
-    expected_path = kb_dir / "Test_Doc.txt"
-    assert expected_path.exists()
-
-    kb = build_kb(data_dir=kb_dir)
-    assert kb is not None
-
-    hits = kb.search("python agents", k=1)
-    assert hits
-    top_path = hits[0][1]
-    assert top_path.endswith("Test_Doc.txt")
+    assert "not allowed" in blocked_import["error"]
+    assert "not allowed" in blocked_dunder["error"]
 
 
 def test_save_state_writes_file(monkeypatch, tmp_path):
