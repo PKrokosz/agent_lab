@@ -51,6 +51,8 @@ from agent import (
     MiniTfidf,
     LocalAgent,
     Tool,
+    build_kb,
+    build_tools,
     save_state,
     tool_read_kb_file,
     tool_save_note,
